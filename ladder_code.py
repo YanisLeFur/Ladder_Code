@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from attr import frozen
 import stim
 import numpy as np
 
@@ -87,12 +88,25 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         sorted(qubit_coordinates, key =lambda v: (v.real, v.imag))
     )}
 
-
+    edges_around_lad: list[tuple[complex,complex]] = [
+        (-1+1j,+1+1j),
+        (+1+1j,+1-1j),
+        (+1-1j,-1-1j),
+        (-1-1j,-1+1j)
+    ]
 
     round_circuit=[]
+
+    measurement_time: dict[frozenset[int], int] ={} #at what time do we measure a pair
+    current_time = 0
+
+    measurement_per_round: int #how much measurement in a round for the target pairs
+
+
     #r = rounds we begin by 0 type plaquette (Z->X), then type 1 plaquete (Z->Y)
+    edge_groups = {"X": [], "Y": [], "Z": []}  
     for r in range(4):
-        edge_groups = {"X": [], "Y": [], "Z": []}   
+         
         relevant_lads =[]
 
         # We want to measure first the checks of type 0 and then the checks of type 1
@@ -104,7 +118,7 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
         for h in relevant_lads:
             
-            # We have now four condition if r=0 only Z type if r = 1 only X type ...
+            # We have now four condition if r%2=0 only Z type if r%2 = 1 only X type or Y type
             relevant_edge_group=[]
             if r%2 == 0:
                 relevant_edge_group = [edge_types[0]]
@@ -124,8 +138,6 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
                 edge_groups[edge_type.pauli].append(frozenset([q1,q2]))
                 edge_groups[edge_type.pauli].append(frozenset([q3,q4]))
 
-
-
         circuit = stim.Circuit()
 
         x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
@@ -138,20 +150,85 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         # Turn parity observables into single qubit observable
         pair_target =[q2i[q] for group in edge_groups.values() for pair in group  for q in sorted_complex(pair)]
         circuit.append_operation("CNOT", pair_target)
+        print(pair_target)
+        measurement_per_round = len(pair_target)//2
+
+
+        #detector search measurement time 
+        for k in range(0,len(pair_target),2):
+            edge_key = frozenset([pair_target[k],pair_target[k+1]]) # put the edge together and list each edge one by one 
+            print("key:", edge_key)
+            measurement_time[edge_key] = current_time #put the time of measurement of each edges
+            current_time+=1
 
         #Measure
         circuit.append_operation("M", pair_target[1::2])
-
-        #restaur qubit bases
+        
+        #restore qubit bases
         circuit.append_operation("H", x_qubits)
         circuit.append_operation("H_YZ", y_qubits)
 
         round_circuit.append(circuit)
+
+    measurement_per_cycle = 4*measurement_per_round
+
+
+
+    #===============START DETECOR CIRCUIT==================
+    #HERE We want to measure first Z type then X type then Z type then Y type
+    det_circuit =[]
+    for r in range(4):
+        circuit=stim.Circuit()
+        if r<2:
+            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
+        if r>1:
+            relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
+        if r%2==0:
+            relevant_side = 0
+        if r%2!=0:
+            relevant_side = 0
+        print(relevant_lads)
+
+        '''
+    det_circuit = []
+    for r in range(4):
+        circuit = stim.Circuit()
+        if r<2:
+            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
+        if r>1:
+            relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
+        end_time= (r)*measurement_per_round
+        for h in relevant_lads:
+            record_targets =[]
+            for a,b in edges_around_lad:
+                q1 = loop(h+a,distance =distance)
+                q2 = loop(h+b,distance =distance)
+                edge_key = frozenset([q2i[q1],q2i[q2]])
+                print("key Final",edge_key)
+                relative_index = (measurement_time[edge_key]-end_time)%measurement_per_round -measurement_per_round
+                record_targets.append(stim.target_rec(relative_index))
+                record_targets.append(stim.target_rec(relative_index-measurement_per_round))
+            circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0])
+        det_circuit.append(circuit)
+            '''
+    #==================END DETECOR CIRCUIT=====================
+
+    #adding the qubit coordinates
     full_circuit = stim.Circuit()
-    cycle = round_circuit[0]+round_circuit[1]+round_circuit[2]+round_circuit[3]
+    initial_cycle = round_circuit[0]+round_circuit[1]+round_circuit[2]+round_circuit[3]
+    stable_cycle = (stim.Circuit()
+        + round_circuit[0]+det_circuit[0]
+        + round_circuit[1]+det_circuit[1]
+        + round_circuit[2]+det_circuit[2]
+        + round_circuit[3]+det_circuit[3]
+    )
+    stable_cycle.append_operation("SHIFT_COORDS",[], [0, 0,1])
     for q,i in q2i.items():
         full_circuit.append_operation("QUBIT_COORDS", [i], [q.real,q.imag])
-    full_circuit += cycle*rounds
+    full_circuit += initial_cycle*10 +stable_cycle *rounds
+
+
+
     return full_circuit
 
 
@@ -159,9 +236,9 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 
 def main():
-    circuit = generate_circuit(distance=3,rounds=6)
+    circuit = generate_circuit(distance=2,rounds=6)
     print(circuit)
-    samples = circuit.compile_sampler().sample(10)
+    samples = circuit.compile_detector_sampler().sample(10)
     for sample in samples:
         print("".join("_1"[e] for e in sample))
 
