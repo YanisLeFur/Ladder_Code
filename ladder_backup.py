@@ -100,20 +100,19 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
     ]
 
     round_circuit=[]
-    edge_groups = {"X": [], "Y": [], "Z": []} 
 
-    #Detector variables 
     measurement_time: dict[frozenset[int], int] ={} 
     current_time = 0
     measurement_per_round: int 
-    r_value =  ['Z1','X','Z2','Y'] #have a different time between the two Z checks measurement
 
-
+    edge_groups = {"X": [], "Y": [], "Z": []}  
 
 
     for r in range(4):
 
         relevant_lads =[]
+
+
         if r<2:
             relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
         if r>1:
@@ -151,22 +150,17 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         
         circuit.append_operation("CNOT", pair_target)
 
-
-
-
-# ========================== START REDO =============================       '''DONE'''
- 
         #detector search measurement time 
         for k in range(0,len(pair_target),2):
-            edge_key = frozenset([pair_target[k],pair_target[k+1],r_value[r]]) 
-            print(r)
-            print(edge_key)
-            measurement_time[edge_key] = current_time 
-            current_time+=1
-
-# ========================== END REDO =============================
-
+            edge_key = frozenset([pair_target[k],pair_target[k+1]]) 
+            if r%4 ==2 and condition_round(r)=='Z': 
+                current_time+=1 
+            else:
+                measurement_time[edge_key] = current_time 
+                current_time+=1
+                
         #Measure
+        print(condition_round(r),pair_target[1::2])
         circuit.append_operation("M", pair_target[1::2])
         
         #restore qubit bases
@@ -183,50 +177,38 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 
     #===============START DETEC CIRCUIT==================
-  
-
-
-
+    #HERE We want to measure first Z type then X type then Z type then Y type
     det_circuit = []
+
+
+
+    'PROBLEM WITH R = 3'
     for r in range(4):
-        print("ROUND" ,r)
+        print("========ROUND=========")
         end_time= (r+1)*measurement_per_round
         circuit = stim.Circuit()
-
         if r==2 or r==1: 
             relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
-            type = 'X'
         if r==0 or r == 3:
             relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
-            type = 'Y'
         for h in relevant_lads:   
             record_targets =[]
             count_edge =0.
             for a,b in edges_around_lad:
                 q1 = loop(h+a,distance =distance)
                 q2 = loop(h+b,distance =distance)
-
-
-                if count_edge<2:
-                    if r<2:
-                        key = frozenset([q2i[q1],q2i[q2],'Z1'])
-                    else:
-                       key = frozenset([q2i[q1],q2i[q2],'Z2']) 
+                edge_key = frozenset([q2i[q1],q2i[q2]])
+                
+                if r%4>1 and (count_edge<2):
+                    relative_index = (measurement_time[edge_key]+2*measurement_per_round-end_time)%measurement_per_cycle - measurement_per_cycle
                 else:
-                     key = frozenset([q2i[q1],q2i[q2],type])
-
-
-                relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
-                if r==0 or r==3:
-                    print(key,relative_index)
+                    relative_index = (measurement_time[edge_key]-end_time)%measurement_per_cycle - measurement_per_cycle
+                print(edge_key,relative_index)
                 record_targets.append(stim.target_rec(relative_index))  
                 record_targets.append(stim.target_rec(relative_index - measurement_per_cycle))
                 count_edge+=1                                            
             circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0]) 
         det_circuit.append(circuit)
-
-
-
 
     # ==================END DETECOR CIRCUIT=====================
 
@@ -249,7 +231,7 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 def main():
     circuit = generate_circuit(distance=2,rounds=1)
-    #print(circuit)
+    print(circuit)
     samples = circuit.compile_detector_sampler().sample(10)
     for sample in samples:
         print("".join("_1"[e] for e in sample))
