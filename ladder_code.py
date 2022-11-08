@@ -99,49 +99,35 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         (-1+1j,+1+1j)
     ]
 
+    #initializing the stable circuit
     round_circuit=[]
     edge_groups = {"X": [], "Y": [], "Z": []} 
+    edge_type_condition =[0,1,0,2]
 
     #Detector variables 
     measurement_time: dict[frozenset[int], int] ={} 
     current_time = 0
     measurement_per_round: int 
     r_value =  ['Z1','X','Z2','Y'] #have a different time between the two Z checks measurement
-
-
-
-
     for r in range(4):
-
-        relevant_lads =[]
-        if r<2:
-            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
-        if r>1:
+        x_qubits = []
+        y_qubits = [] 
+        if r==3:
             relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
-
+        else:
+            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
         for h in relevant_lads:
-            relevant_edge_group=[]
-            if r%4 == 0:
-                relevant_edge_group = [edge_types[0]]
-            if r%2==1:
-                if lad_centers[h] == 0:
-                    relevant_edge_group = [edge_types[1]]
-                if lad_centers[h] == 1:
-                    relevant_edge_group = [edge_types[2]]
-            for edge_type in relevant_edge_group:
-                for sign in [+1,-1]:
-                    q1 = loop(h + edge_type.lad_to_qubit_delta*sign, distance=distance)
-                    q2 = loop(h + (edge_type.lad_to_qubit_delta + edge_type.size_check)*sign, distance = distance)
-                    edge_groups[edge_type.pauli].append(frozenset([q1,q2]))
-
+            for sign in [+1,-1]:
+                    q1 = loop(h + edge_types[edge_type_condition[r]].lad_to_qubit_delta*sign, distance=distance)
+                    q2 = loop(h + (edge_types[edge_type_condition[r]].lad_to_qubit_delta + edge_types[edge_type_condition[r]].size_check)*sign, distance = distance)
+                    if r!=2:
+                        edge_groups[condition_round(r)].append(frozenset([q1,q2]))
 
         circuit = stim.Circuit()
-
-
+        pair_target = []
         x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
         y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
-        print(x_qubits)
-        print(y_qubits)
+
 
         #Make all the parity operation Z basis parities
         circuit.append_operation("H", x_qubits)
@@ -149,18 +135,15 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
         # Turn parity observables into single qubit observable
         pair_target =[q2i[q] for pair in edge_groups[condition_round(r)] for q in sorted_complex(pair)]
-        
+        print(pair_target)
         circuit.append_operation("CNOT", pair_target)
 
 
-
- 
         #detector search measurement time 
         for k in range(0,len(pair_target),2):
             edge_key = frozenset([pair_target[k],pair_target[k+1],r_value[r]]) 
             measurement_time[edge_key] = current_time 
             current_time+=1
-
 
 
         #Measure
@@ -196,11 +179,9 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
         #in order to know the relative measurement time we need to know at what time stop the round r
         end_time= (r+1)*measurement_per_round
-        print("==== ROUND",r,"====")
         circuit = stim.Circuit()
 
         relevant_lads =[h for h, category in lad_centers.items() if category == key_condition[0][r] ]
-        print(key_condition[0][r])
         detect_count =0
         for h in relevant_lads:   
             record_targets =[]
@@ -208,8 +189,6 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
             for a,b in edges_around_lad:
                 q1 = loop(h+a,distance =distance)
                 q2 = loop(h+b,distance =distance)
-
-
                 key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r]])
                 relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
 
@@ -220,14 +199,10 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
                 else:   
                     old_relative_index = relative_index - measurement_per_cycle
                 
-                print("k-i",key,relative_index)
-                print("old i",old_relative_index)
                 record_targets.append(stim.target_rec(relative_index))  
-                record_targets.append(stim.target_rec(old_relative_index))
+                record_targets.append(stim.target_rec(relative_index - measurement_per_cycle))
                 count_edge+=1                                            
             circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0])
-            detect_count+=1
-        print(detect_count)
         det_circuit.append(circuit)
 
 
