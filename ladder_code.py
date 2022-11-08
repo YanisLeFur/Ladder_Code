@@ -110,8 +110,6 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
     measurement_per_round: int 
     r_value =  ['Z1','X','Z2','Y'] #have a different time between the two Z checks measurement
     for r in range(4):
-        x_qubits = []
-        y_qubits = [] 
         if r==3:
             relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
         else:
@@ -126,12 +124,16 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         circuit = stim.Circuit()
         pair_target = []
         x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
+        print(x_qubits)
         y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
-
+        print(y_qubits)
 
         #Make all the parity operation Z basis parities
-        circuit.append_operation("H", x_qubits)
-        circuit.append_operation("H_YZ", y_qubits)
+
+        if r==1:
+            circuit.append_operation("H", x_qubits)
+        if r ==3:
+            circuit.append_operation("H_YZ", y_qubits)
 
         # Turn parity observables into single qubit observable
         pair_target =[q2i[q] for pair in edge_groups[condition_round(r)] for q in sorted_complex(pair)]
@@ -151,10 +153,10 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
         
         #restore qubit bases
         circuit.append_operation("CNOT", pair_target)
-        circuit.append_operation("H_YZ", y_qubits)
-        circuit.append_operation("H", x_qubits)
-
-
+        if r ==3:
+            circuit.append_operation("H_YZ", y_qubits)
+        if r==1:
+            circuit.append_operation("H", x_qubits)
         round_circuit.append(circuit)
 
     measurement_per_round = len(pair_target)//2
