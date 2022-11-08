@@ -140,7 +140,8 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
         x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
         y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
-
+        print(x_qubits)
+        print(y_qubits)
 
         #Make all the parity operation Z basis parities
         circuit.append_operation("H", x_qubits)
@@ -153,18 +154,14 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 
 
-
-# ========================== START REDO =============================       '''DONE'''
  
         #detector search measurement time 
         for k in range(0,len(pair_target),2):
             edge_key = frozenset([pair_target[k],pair_target[k+1],r_value[r]]) 
-            print(r)
-            print(edge_key)
             measurement_time[edge_key] = current_time 
             current_time+=1
 
-# ========================== END REDO =============================
+
 
         #Measure
         circuit.append_operation("M", pair_target[1::2])
@@ -182,53 +179,58 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 
 
-    #===============START DETEC CIRCUIT==================
-  
 
-
-
+    # Generate the detector circuit we will create  4 different detector circuit 
     det_circuit = []
+
+
+    key_condition = [[1,0,0,1],
+                     ['Z1','Z1','Z2','Z2'],
+                     ['Z1','Z1','Z2','Z2'],
+                     ['Y','X','X','Y'],
+                     ['Y','X','X','Y']
+                    ]
+
+
     for r in range(4):
-        print("ROUND" ,r)
+
+        #in order to know the relative measurement time we need to know at what time stop the round r
         end_time= (r+1)*measurement_per_round
+        print("==== ROUND",r,"====")
         circuit = stim.Circuit()
 
-        if r==2 or r==1: 
-            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
-            type = 'X'
-        if r==0 or r == 3:
-            relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
-            type = 'Y'
+        relevant_lads =[h for h, category in lad_centers.items() if category == key_condition[0][r] ]
+        print(key_condition[0][r])
+        detect_count =0
         for h in relevant_lads:   
             record_targets =[]
-            count_edge =0.
+            count_edge =0
             for a,b in edges_around_lad:
                 q1 = loop(h+a,distance =distance)
                 q2 = loop(h+b,distance =distance)
 
 
-                if count_edge<2:
-                    if r<2:
-                        key = frozenset([q2i[q1],q2i[q2],'Z1'])
-                    else:
-                       key = frozenset([q2i[q1],q2i[q2],'Z2']) 
-                else:
-                     key = frozenset([q2i[q1],q2i[q2],type])
-
-
+                key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r]])
                 relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
-                if r==0 or r==3:
-                    print(key,relative_index)
+
+                #we measure two times Z checks so we have to take the measurement of the previous Z 2 rounds before and not 4 rounds
+                if count_edge<2:
+                    old_key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r-2]])
+                    old_relative_index = (measurement_time[old_key]-end_time)%measurement_per_cycle - measurement_per_cycle
+                else:   
+                    old_relative_index = relative_index - measurement_per_cycle
+                
+                print("k-i",key,relative_index)
+                print("old i",old_relative_index)
                 record_targets.append(stim.target_rec(relative_index))  
-                record_targets.append(stim.target_rec(relative_index - measurement_per_cycle))
+                record_targets.append(stim.target_rec(old_relative_index))
                 count_edge+=1                                            
-            circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0]) 
+            circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0])
+            detect_count+=1
+        print(detect_count)
         det_circuit.append(circuit)
 
 
-
-
-    # ==================END DETECOR CIRCUIT=====================
 
     full_circuit = stim.Circuit()
     initial_cycle = round_circuit[0]+round_circuit[1]+round_circuit[2]+round_circuit[3]
@@ -249,7 +251,7 @@ def generate_circuit(distance: int, rounds: int)->stim.Circuit:
 
 def main():
     circuit = generate_circuit(distance=2,rounds=1)
-    #print(circuit)
+    print(circuit)
     samples = circuit.compile_detector_sampler().sample(10)
     for sample in samples:
         print("".join("_1"[e] for e in sample))
