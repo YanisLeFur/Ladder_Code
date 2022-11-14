@@ -88,7 +88,15 @@ def generate_circuit_cycle(*,
         circuit.append_operation("H_YZ", y_qubits)
         circuit.append_operation("H", x_qubits)
 
-
+        # Multiply relevant measurements into the observable.
+        included_measurements = []
+        for group in edge_groups.values():
+            for pair in group:
+                a, b = pair
+                if a.real == b.real == 1:
+                    edge_key = frozenset([q2i[a], q2i[b]])
+                    included_measurements.append(stim.target_rec(measurement_times[edge_key] - current_time))
+        circuit.append_operation("OBSERVABLE_INCLUDE", included_measurements, 0)
 
         round_circuits.append(circuit)
     measurements_per_cycle = current_time
@@ -500,6 +508,7 @@ def main():
     plot_data("data_from_parity_errors.csv",
               title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
               rounds_per_shot=18)
+
 
 
 if __name__ == '__main__':
