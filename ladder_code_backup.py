@@ -13,9 +13,21 @@ from typing import Callable, List, Dict, Any, Set, FrozenSet, Iterable, Tuple
 import math
 import matplotlib.pyplot as plt
 
+def print_2d(values: dict[complex, any]):
+    assert all(v.real ==int(v.real) for v in values)
+    assert all(v.imag ==int(v.imag) for v in values)
+    assert all(v.real >=0 and v.imag>=0 for v in values)
+    w = int(max((v.real for v in values), default = 0) + 1)
+    h = int(max((v.imag for v in values), default = 0) + 1)
+    s=""
+    for y in range(h):
+        for x in range(w):
+            s += str(values.get(x+y*1j,"_"))
+        s+= "\n"
+    print(s)
 
 
-#periodic Boundary conditions
+#periodic BC
 def loop(c: complex, *, distance:int)->complex:
     r = c.real %(distance*4) 
     i =c.imag 
@@ -104,12 +116,8 @@ def generate_circuit_cycle(*,
 
         # Turn parity observables into single qubit observable
         pair_target =[q2i[q] for pair in edge_groups[condition_round(r)] for q in sorted_complex(pair)]
-
-
         if before_parity_measure_2q_depolarization>0:
             circuit.append_operation("DEPOLARIZE2",pair_target,before_parity_measure_2q_depolarization)
-    
- 
         circuit.append_operation("CNOT", pair_target)
 
     
@@ -152,6 +160,7 @@ def generate_circuit_cycle(*,
 
     # Generate the detector circuit we will create  4 different detector circuit 
     if detectors:
+        det_circuit = []
         key_condition = [[1,0,0,1],
                         ['Z1','Z1','Z2','Z2'],
                         ['Z1','Z1','Z2','Z2'],
@@ -159,9 +168,11 @@ def generate_circuit_cycle(*,
                         ['Y','X','X','Y']
                         ]
         for r in range(4):
-            circuit = stim.Circuit()
+            #in order to know the relative measurement time we need to know at what time stop the round r
             end_time= (r+1)*measurement_per_round
+            circuit = stim.Circuit()
             relevant_lads =[h for h, category in lad_centers.items() if category == key_condition[0][r] ]
+            detect_count =0
             for h in relevant_lads:   
                 record_targets =[]
                 count_edge =0
@@ -170,6 +181,7 @@ def generate_circuit_cycle(*,
                     q2 = loop(h+b,distance =distance)
                     key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r]])
                     relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
+                    #we measure two times Z checks so we have to take the measurement of the previous Z 2 rounds before and not 4 rounds
                     if count_edge<2:
                         old_key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r-2]])
                         
@@ -177,24 +189,24 @@ def generate_circuit_cycle(*,
                         if r%2==0:
                             old_relative_index-=2*measurement_per_round
                     else:   
-                        old_relative_index = relative_index - measurement_per_cycle            
+                        old_relative_index = relative_index - measurement_per_cycle             
                     record_targets.append(stim.target_rec(relative_index))  
                     record_targets.append(stim.target_rec(old_relative_index))
-                    count_edge+=1                                          
-                circuit.append_operation("DETECTOR", record_targets, [h.real, h.imag, 0])
-            circuit.append_operation("SHIFT_COORDS", [], [0, 0, 1])
-            round_circuit[r] += circuit
+                    count_edge+=1                                            
+                circuit.append_operation("DETECTOR",record_targets, [h.real, h.imag,0])
+            det_circuit.append(circuit)
 
     full_circuit = stim.Circuit()
-    if before_cycle_1q_depolarization > 0:
-        full_circuit.append_operation("DEPOLARIZE1", sorted(q2i.values()), before_cycle_1q_depolarization)
-    full_circuit += round_circuit[0] + round_circuit[1] + round_circuit[2] + round_circuit[3]
+    if before_cycle_1q_depolarization>0:
+        full_circuit.append_operation("DEPOLARIZE1",sorted(q2i.values()),before_cycle_1q_depolarization)
+    full_circuit = round_circuit[0]+round_circuit[1]+round_circuit[2]+round_circuit[3]
+   
     return full_circuit
 
 
 
 
-#Generate a circuit with noise (Y/N) and detector (Y/N) also implement the qubits coordinatesand the logical operators
+
 def generate_circuit(distance: int, cycles: int,
                      before_parity_measure_2q_depolarization: float,
                      before_round_1q_depolarization: float,
@@ -214,9 +226,18 @@ def generate_circuit(distance: int, cycles: int,
                 q = h+edge_types[0].lad_to_qubit_delta*sign
                 qubit_coordinates.add(loop(q,distance = distance))
 
-    q2i: dict[complex, int] = {q: i for i, q in enumerate(sorted_complex(qubit_coordinates))}
+    #We check that the qubit are in the right place
+    fused_dict = dict(lad_centers)
+    for q in qubit_coordinates:
+        fused_dict[q]="q"
+    #print("\n")
+    #print_2d(fused_dict)
 
-    #generation of the different type of circuit
+    #sorting the qubits (ordering)
+    q2i: dict[complex, int] = {q: i for i, q in enumerate(
+        sorted_complex(qubit_coordinates)
+    )}
+
     round_circuit_no_noise_no_detectors = generate_circuit_cycle(
         q2i=q2i,
         before_parity_measure_2q_depolarization=0,
@@ -254,12 +275,11 @@ def generate_circuit(distance: int, cycles: int,
     
     #Initialize data qubits along logical observables leg into correct basis for observable to be deterministic
     qubits_bottom_leg = sorted([q for q in qubit_coordinates if q.imag ==0], key = lambda v: v.real)
-   
     full_circuit += (
-            round_circuit_no_noise_no_detectors * 2
-            + round_circuit_no_noise_yes_detectors * 2
+                      round_circuit_no_noise_no_detectors * 2
+                      + round_circuit_no_noise_yes_detectors * 2
     )
-    if start_of_all_noisy_cycles_1q_depolarization > 0:
+    if start_of_all_noisy_cycles_1q_depolarization>0:
         full_circuit.append_operation("DEPOLARIZE1",
                                       sorted(q2i.values()),
                                       start_of_all_noisy_cycles_1q_depolarization)
@@ -268,7 +288,6 @@ def generate_circuit(distance: int, cycles: int,
             + round_circuit_no_noise_yes_detectors * 2
             + round_circuit_no_noise_no_detectors * 2
     )
-
     #finish circuit with data measurement
     qubits_coords_to_measure = [q for q in qubits_bottom_leg]
     qubits_indices_to_measure =[q2i[q] for q in qubits_coords_to_measure]
@@ -283,20 +302,6 @@ def generate_circuit(distance: int, cycles: int,
     return full_circuit
 
 
-def print_2d(values: dict[complex, any]):
-    assert all(v.real ==int(v.real) for v in values)
-    assert all(v.imag ==int(v.imag) for v in values)
-    assert all(v.real >=0 and v.imag>=0 for v in values)
-    w = int(max((v.real for v in values), default = 0) + 1)
-    h = int(max((v.imag for v in values), default = 0) + 1)
-    s=""
-    for y in range(h):
-        for x in range(w):
-            s += str(values.get(x+y*1j,"_"))
-        s+= "\n"
-    print(s)
-
-#generate data for some type of error
 def sample_error_rates(*,
                        probabilities: List[float],
                        diameter_factor: List[int],
@@ -337,17 +342,19 @@ def sample_error_rates(*,
                 print(f"{d},{p},{shots},{num_correct}", file=f, flush=True)
             print()
 
-#decompose the error model and do the matching in order to count the number of errors
+
 def num_errors(circuit: stim.Circuit, num_shots: int):
-    print(circuit.detector_error_model())
+
     model = circuit.detector_error_model(decompose_errors = True) #,flatten_loops=True
     matching = pymatching.Matching.from_detector_error_model(model)
     sampler = circuit.compile_detector_sampler()
     syndrome, actual_observables = sampler.sample(shots=num_shots, separate_observables=True)
+
+   
     num_errors = 0
     for i in range(syndrome.shape[0]):
-       predicted_observables = matching.decode(syndrome[i, :])
-       num_errors +=  not np.array_equal(actual_observables[i, :], predicted_observables)
+        predicted_observables = matching.decode(syndrome[i, :])
+        num_errors +=  not np.array_equal(actual_observables[i, :], predicted_observables)
 
     return num_errors
 
@@ -413,13 +420,10 @@ def plot_data(path: str, title: str, rounds_per_shot: int):
     plt.show()
 
 
-#create and plot the data for an error Model
 def sample_single_depolarizing_layer_circuit():
     sample_error_rates(
         shots=20000,
         probabilities=[
-            0.001,
-            0.0005,
             0.001,
             0.01,
             0.02,
@@ -437,7 +441,7 @@ def sample_single_depolarizing_layer_circuit():
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=0,
         before_round_1q_depolarization_factor=0,
-        noisy_cycles=50,
+        noisy_cycles=0,
         start_of_all_noisy_cycles_1q_depolarization_factor=1,
         diameter_factor=[1, 2, 3],
         append=False,
@@ -445,34 +449,31 @@ def sample_single_depolarizing_layer_circuit():
     )
 
 
-#create and plot the data for an error Model
 def sample_parity_error_circuit():
 
     sample_error_rates(
         shots=10000,
         probabilities=[
-            0.0001,
-            0.0005,
             0.001,
-            0.003,
-            0.002,
-            0.005,
-            0.007,
-            0.009,
-            0.01,
-            0.015,
-            0.02,
-            0.025,
-            0.03,
-            0.035,
-            0.04,
-            0.045,
-            0.05,
+            #0.003,
+            ##0.002,
+            #0.005,
+            #0.007,
+            #0.009,
+            #0.01,
+            #0.015,
+            #0.02,
+            #0.025,
+            #0.03,
+            #0.035,
+            #0.04,
+            #0.045,
+            #0.05,
         ],
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=1,
         before_round_1q_depolarization_factor=0,
-        noisy_cycles=50,
+        noisy_cycles=6,
         start_of_all_noisy_cycles_1q_depolarization_factor=0,
         diameter_factor=[2],
         append=False,
@@ -480,31 +481,17 @@ def sample_parity_error_circuit():
     )
 
 def main():
-    d = 2
-    noisy_cycles = 2
-    p = 0.5
-    circuit = generate_circuit(
-                    distance=d,
-                    cycles=noisy_cycles,
-                    before_cycle_1q_depolarization=p,
-                    before_round_1q_depolarization=p,
-                    before_parity_measure_2q_depolarization=p,
-                    start_of_all_noisy_cycles_1q_depolarization=p,
-    )
-    #error_model =circuit.detector_error_model()
-    #samples = circuit.compile_detector_sampler().sample(10)
-    #for sample in samples:  
-    #    print("".join("_1"[e] for e in sample))
     #sample_single_depolarizing_layer_circuit()
     sample_parity_error_circuit()
     #plot_data("data.csv",
     #          title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
     #          rounds_per_shot=18)
+
+
+
     plot_data("data_from_parity_errors.csv",
               title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
               rounds_per_shot=18)
-
-
 
 
 if __name__ =='__main__':

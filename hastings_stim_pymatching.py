@@ -255,6 +255,7 @@ def sorted_complex(xs: Iterable[complex]) -> List[complex]:
 def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots: int):
     """Collect statistics on how often logical errors occur when correcting using detections."""
     e = circuit.detector_error_model()
+    print(e)
     m = detector_error_model_to_matching(e)
 
     t0 = time.monotonic()
@@ -270,11 +271,13 @@ def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots
         num_correct += actual_observable == predicted_observable
     t2 = time.monotonic()
 
-    # decode_time = t2 - t1
-    # sample_time = t1 - t0
-    # print("decode", decode_time, "sample", sample_time)
-
+    decode_time = t2 - t1
+    sample_time = t1 - t0
+    print("decode", decode_time, "sample", sample_time)
+    num_correct = 0
     return num_correct
+
+
 
 
 def detector_error_model_to_matching(model: stim.DetectorErrorModel) -> pymatching.Matching:
@@ -333,6 +336,8 @@ def detector_error_model_to_matching(model: stim.DetectorErrorModel) -> pymatchi
     _iter_model(model, 1, handle_error)
 
     return pymatching.Matching(g)
+
+
 
 
 def sample_error_rates(*,
@@ -476,14 +481,14 @@ def sample_parity_error_circuit():
         shots=10000,
         probabilities=[
             0.01,
-            0.015,
-            0.02,
-            0.025,
-            0.03,
-            0.035,
-            0.04,
-            0.045,
-            0.05,
+            # 0.015,
+            # 0.02,
+            # 0.025,
+            # 0.03,
+            # 0.035,
+            # 0.04,
+            # 0.045,
+            # 0.05,
         ],
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=1,
@@ -505,9 +510,9 @@ def main():
 
     sample_parity_error_circuit()
 
-    plot_data("data_from_parity_errors.csv",
-              title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
-              rounds_per_shot=18)
+   # plot_data("data_from_parity_errors.csv",
+   #           title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
+   #           rounds_per_shot=18)
 
 
 
