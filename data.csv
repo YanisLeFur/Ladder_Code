@@ -1,1 +1,3 @@
 distance,physical_error_rate,num_shots,num_correct
+1,0.001,20000,18768
+2,0.001,20000,17603
