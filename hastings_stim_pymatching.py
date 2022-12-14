@@ -54,6 +54,7 @@ def generate_circuit_cycle(*,
                 q1 = torus(h + edge_type.hex_to_qubit_delta, distance=distance)
                 q2 = torus(h + edge_type.hex_to_hex_delta - edge_type.hex_to_qubit_delta, distance=distance)
                 edge_groups[edge_type.pauli].append(frozenset([q1, q2]))
+        
         x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
         y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
 
@@ -81,6 +82,8 @@ def generate_circuit_cycle(*,
             edge_key = frozenset([pair_targets[k], pair_targets[k + 1]])
             measurement_times[edge_key] = current_time
             current_time += 1
+        
+        #Measure
         circuit.append_operation("M", pair_targets[1::2])
 
         # Restore qubit bases.
@@ -220,11 +223,10 @@ def generate_circuit(distance: int, cycles: int,
     full_circuit.append_operation("H_YZ", y_initialized)
     full_circuit.append_operation("H", x_initialized)
     full_circuit.append_operation("M", qubit_indices_to_measure)
-
     full_circuit.append_operation("OBSERVABLE_INCLUDE",
                                   [stim.target_rec(i - len(qubit_indices_to_measure)) for i in order.values()],
                                   0)
-
+    print(full_circuit)
     return full_circuit
 
 
@@ -254,9 +256,9 @@ def sorted_complex(xs: Iterable[complex]) -> List[complex]:
 
 def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots: int):
     """Collect statistics on how often logical errors occur when correcting using detections."""
-    e = circuit.detector_error_model()
+    e = circuit.detector_error_model(decompose_errors=True,flatten_loops=True)
     print(e)
-    m = detector_error_model_to_matching(e)
+    #m = detector_error_model_to_matching(e)
 
     t0 = time.monotonic()
     detector_samples = circuit.compile_detector_sampler().sample(num_shots, append_observables=True)
@@ -268,6 +270,7 @@ def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots
         detectors_only = sample.copy()
         detectors_only[-1] = 0
         predicted_observable = m.decode(detectors_only)[0]
+
         num_correct += actual_observable == predicted_observable
     t2 = time.monotonic()
 
@@ -448,7 +451,7 @@ def plot_data(path: str, title: str, rounds_per_shot: int):
 
 def sample_single_depolarizing_layer_circuit():
     sample_error_rates(
-        shots=20000,
+        shots=10000,
         probabilities=[
             0.001,
             0.01,
@@ -467,9 +470,9 @@ def sample_single_depolarizing_layer_circuit():
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=0,
         before_round_1q_depolarization_factor=0,
-        noisy_cycles=0,
+        noisy_cycles=50,
         start_of_all_noisy_cycles_1q_depolarization_factor=1,
-        diameter_factor=[1, 2, 3],
+        diameter_factor=[1],
         append=True,
         path="data.csv",
     )
@@ -493,10 +496,10 @@ def sample_parity_error_circuit():
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=1,
         before_round_1q_depolarization_factor=0,
-        noisy_cycles=6,
+        noisy_cycles=0,
         start_of_all_noisy_cycles_1q_depolarization_factor=0,
-        diameter_factor=[1, 2],
-        append=True,
+        diameter_factor=[1],
+        append=False,
         path="data_from_parity_errors.csv",
     )
 
