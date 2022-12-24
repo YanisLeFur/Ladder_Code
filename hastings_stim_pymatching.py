@@ -8,7 +8,7 @@ import pymatching
 import networkx as nx
 import stim
 import matplotlib.pyplot as plt
-
+import numpy as np
 
 # Define some data for working with the three edge orientations.
 @dataclass
@@ -29,6 +29,9 @@ EDGES_AROUND_HEX: List[Tuple[complex, complex]] = [
     (-1 + 1j, -1),
     (-1, -1 - 1j),
 ]
+
+
+
 
 
 def generate_circuit_cycle(*,
@@ -258,7 +261,7 @@ def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots
     """Collect statistics on how often logical errors occur when correcting using detections."""
     e = circuit.detector_error_model(decompose_errors=True,flatten_loops=True)
     print(e)
-    #m = detector_error_model_to_matching(e)
+    m = detector_error_model_to_matching(e)
 
     t0 = time.monotonic()
     detector_samples = circuit.compile_detector_sampler().sample(num_shots, append_observables=True)

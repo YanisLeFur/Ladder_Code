@@ -17,6 +17,8 @@ import sys
 from tqdm.auto import tqdm
 
 
+
+
 #periodic Boundary conditions
 def loop(c: complex, *, distance:int)->complex:
     r = c.real %(distance*4) 
@@ -59,6 +61,7 @@ def condition_round(r)->string:
     return condition
 
 
+
 def generate_circuit_cycle(*,
                            q2i: dict[complex,int],
                            before_parity_measure_2q_depolarization: float,
@@ -93,52 +96,53 @@ def generate_circuit_cycle(*,
         y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
 
         circuit = stim.Circuit()
-        if before_round_1q_depolarization>0:
-            circuit.append_operation("DEPOLARIZE1",sorted(q2i.values()),before_round_1q_depolarization)
-            
-        # Turn parity observables into single qubit observable
+        if r==0:
+            if before_round_1q_depolarization>0:
+                circuit.append_operation("Z_ERROR",sorted(q2i.values()),before_round_1q_depolarization) #DEPOLARIZE1 initially
+        
+         #Turn parity observables into single qubit observable
         pair_target =[q2i[q] for pair in edge_groups[condition_round(r)] for q in sorted_complex(pair)]
-
+        
         #Make all the parity operation Z basis parities
-     
         if r==1:
-            circuit.append_operation("H", pair_target[1::2])
+            circuit.append_operation("H", pair_target)
         if r ==3:
-            circuit.append_operation("H_YZ", pair_target[1::2])  #[1::2][::-1]
-
-
+            circuit.append_operation("H_YZ", pair_target)
 
         if before_parity_measure_2q_depolarization>0:
             circuit.append_operation("DEPOLARIZE2",pair_target,before_parity_measure_2q_depolarization)
-
-        if r%2==0:
-            circuit.append_operation("CNOT", pair_target)
-        else:
+        
+        if r==3:
             circuit.append_operation("CNOT", pair_target[::-1])
+        else:
+            circuit.append_operation("CNOT", pair_target)
 
         #detector search measurement time 
         for k in range(0,len(pair_target),2):
             edge_key = frozenset([pair_target[k],pair_target[k+1],r_value[r]]) 
-            print(edge_key)
             measurement_time[edge_key] = current_time 
             current_time+=1
 
         #Measure
-        print(pair_target[1::2])
-        
-        circuit.append_operation("M", pair_target[1::2])
-        #restore qubit bases
-        if r%2==0:
-            circuit.append_operation("CNOT", pair_target)
+        if r==3:
+            circuit.append_operation("M", pair_target[::2])
         else:
+            circuit.append_operation("M", pair_target[1::2])
+    
+        #restore qubit bases
+        if r==3:
             circuit.append_operation("CNOT", pair_target[::-1])
+        else:
+            circuit.append_operation("CNOT", pair_target)
 
 
-            
         if r ==3:
-            circuit.append_operation("H_YZ", pair_target[1::2])
+            circuit.append_operation("H_YZ", pair_target)
         if r==1:
-            circuit.append_operation("H", pair_target[1::2])
+            circuit.append_operation("H", pair_target)
+
+
+
 
         #multiply relevant measurement into the observable
         included_measurement =[]
@@ -149,9 +153,10 @@ def generate_circuit_cycle(*,
                 condition_observable = "Z1"
             else:
                 condition_observable = "Z2"
-            edge_key_obs = frozenset([q2i[a],q2i[b],condition_observable])
-            included_measurement.append(stim.target_rec(measurement_time[edge_key_obs]-current_time))
-        #circuit.append_operation("OBSERVABLE_INCLUDE", included_measurement,0)      
+            edge_key = frozenset([q2i[a],q2i[b],condition_observable])
+            included_measurement.append(stim.target_rec(measurement_time[edge_key]-current_time))
+        circuit.append_operation("OBSERVABLE_INCLUDE", included_measurement,0)
+       
         round_circuit.append(circuit)
     measurement_per_cycle = current_time
     measurement_per_round = measurement_per_cycle//4
@@ -170,34 +175,36 @@ def generate_circuit_cycle(*,
             relevant_lads =[h for h, category in lad_centers.items() if category == key_condition[0][r] ]
             for h in relevant_lads:   
                 record_targets =[]
-                count_edge =0  
+                count_edge =0
+      
                 for a,b in edges_around_lad:
                     q1 = loop(h+a,distance =distance)
                     q2 = loop(h+b,distance =distance)
                     key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r]])
                     relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
                     if count_edge<2:
-                       
                         old_key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r-2]])
+                        
                         old_relative_index = (measurement_time[old_key]-end_time)%measurement_per_cycle - measurement_per_cycle
-                        #if r%2==0:
-                        #   old_relative_index-=2*measurement_per_round
-                    
+                        if r%2==0:
+                            old_relative_index-=2*measurement_per_round
                     else:   
-                        old_relative_index = relative_index - measurement_per_cycle     
-                    print(relative_index,key,old_relative_index,old_key)       
+                        old_relative_index = relative_index - measurement_per_cycle          
                     record_targets.append(stim.target_rec(relative_index))  
                     record_targets.append(stim.target_rec(old_relative_index))
-                    count_edge+=1                                   
+                    count_edge+=1                                          
                 circuit.append_operation("DETECTOR", record_targets, [h.real, h.imag, 0])
             circuit.append_operation("SHIFT_COORDS", [], [0, 0, 1])
+            
             round_circuit[r] += circuit
 
     full_circuit = stim.Circuit()
     if before_cycle_1q_depolarization > 0:
         full_circuit.append_operation("DEPOLARIZE1", sorted(q2i.values()), before_cycle_1q_depolarization)
     full_circuit += round_circuit[0] + round_circuit[1] + round_circuit[2] + round_circuit[3]
+
     return full_circuit
+
 
 
 
@@ -260,9 +267,11 @@ def generate_circuit(distance: int, cycles: int,
     #Initialize data qubits along logical observables leg into correct basis for observable to be deterministic
     qubits_top_leg = sorted([q for q in qubit_coordinates if q.imag ==2], key = lambda v: v.real)
 
+    #add here the ancilla qubits
+
     full_circuit += (
-             round_circuit_no_noise_no_detectors * 4
-             + round_circuit_no_noise_yes_detectors * 1
+             round_circuit_no_noise_no_detectors * 2
+             + round_circuit_no_noise_yes_detectors * 0
     )
     if start_of_all_noisy_cycles_1q_depolarization > 0:
         full_circuit.append_operation("DEPOLARIZE1",
@@ -279,9 +288,9 @@ def generate_circuit(distance: int, cycles: int,
     qubits_indices_to_measure =[q2i[q] for q in qubits_coords_to_measure]
     order = {q: i for i,q in enumerate(qubits_coords_to_measure)}
     full_circuit.append_operation("M",qubits_indices_to_measure)
-   # full_circuit.append_operation("OBSERVABLE_INCLUDE",
-   #                             [stim.target_rec(i-len(qubits_indices_to_measure)) for i in order.values()],
-#                                0)
+    full_circuit.append_operation("OBSERVABLE_INCLUDE",
+                               [stim.target_rec(i-len(qubits_indices_to_measure)) for i in order.values()],
+                               0)
     return full_circuit
 
 
@@ -289,29 +298,36 @@ def generate_circuit(distance: int, cycles: int,
 
 def run_shots_correct_errors_return_num_correct(circuit: stim.Circuit, num_shots: int):
     """Collect statistics on how often logical errors occur when correcting using detections."""
-    e = circuit.detector_error_model(flatten_loops=True,ignore_decomposition_failures=True)
-    print(e)
-    #print("======NEW CODE======")
-    e = circuit.detector_error_model(decompose_errors=True,flatten_loops=True)
-    print(e)
-   # e = circuit.detector_error_model(decompose_errors=True)
-    # m = detector_error_model_to_matching(e)
-    # detector_samples = circuit.compile_detector_sampler().sample(num_shots, append_observables=True)
-    # num_correct = 0
-    # for sample in detector_samples:
-    #     actual_observable = sample[-1]
-    #     detectors_only = sample.copy()
-    #     detectors_only[-1] = 0
-    #     predicted_observable = m.decode(detectors_only)[0]
-    #     num_correct += actual_observable == predicted_observable
-    matching = pymatching.Matching.from_detector_error_model(e)
-    sampler = circuit.compile_detector_sampler()
-    syndrome, actual_observables = sampler.sample(shots=num_shots, separate_observables=True)
-
+    # e = circuit.detector_error_model(flatten_loops=True,ignore_decomposition_failures=True)
+    # print(e)
+    # e = circuit.detector_error_model(decompose_errors=True,flatten_loops=True)
+    # print(e)
+    e = circuit.detector_error_model()
+    m = detector_error_model_to_matching(e)
+    detector_samples = circuit.compile_detector_sampler().sample(num_shots, append_observables=True)
+    detect,log =  circuit.compile_detector_sampler().sample(num_shots,separate_observables=True)
+   # print("log size:",len(log),"\n")
+   # for sample in log.T:  
+   #   print("".join("_1"[int(e)] for e in sample))
+    error_model =circuit.detector_error_model()
     num_correct = 0
-    for i in range(syndrome.shape[0]):
-        predicted_observables = matching.decode(syndrome[i, :])
-        num_correct +=  np.array_equal(actual_observables[i, :], predicted_observables)
+    for sample in detector_samples:
+        actual_observable = sample[-1]
+        detectors_only = sample.copy()
+        detectors_only[-1] = 0
+        predicted_observable = m.decode(detectors_only)[0]
+        #print(actual_observable==predicted_observable)
+        num_correct += actual_observable == predicted_observable
+
+
+    # matching = pymatching.Matching.from_detector_error_model(e)
+    # sampler = circuit.compile_detector_sampler()
+    # syndrome, actual_observables = sampler.sample(shots=num_shots, separate_observables=True)
+
+    # num_correct = 0
+    # for i in range(syndrome.shape[0]):
+    #     predicted_observables = matching.decode(syndrome[i, :])
+    #     num_correct +=  np.array_equal(actual_observables[i, :], predicted_observables)
 
     return num_correct
 
@@ -353,23 +369,25 @@ def detector_error_model_to_matching(model: stim.DetectorErrorModel) -> pymatchi
 
     g = nx.Graph()
     num_detectors = model.num_detectors
-    for k in range(num_detectors):
-        g.add_node(k)
+    g.add_node(0, is_boundary=True)
+    for k in range(num_detectors-1):
+        g.add_node(k+1)
+    
     g.add_node(num_detectors, is_boundary=True)
-    g.add_node(num_detectors + 1)
+    #g.add_node(num_detectors + 1)
     for k in range(num_detectors + 1):
-        g.add_edge(k, num_detectors + 1, weight=16777215)#9999999999 16777215
+        g.add_edge(k, num_detectors, weight=16777215)#9999999999 16777215
 
     def handle_error(p: float, dets: List[int], frame_changes: List[int]):
         if p == 0:
             return
         if len(dets) == 1:
-            dets.append(num_detectors)
+            dets.append(num_detectors+1)
         if len(dets) != 2:
             return  # Just ignore correlated error mechanisms (e.g. Y errors / XX errors)
         g.add_edge(*dets, weight=-math.log(p), qubit_id=frame_changes)
-        
     _iter_model(model, 1, handle_error)
+
     return pymatching.Matching(g)
 
 def sample_error_rates(*,
@@ -424,13 +442,10 @@ class DistanceExperimentData:
 
 
 def round_adjustment(error_rate: float, rounds: int) -> float:
-
     
     randomize_rate = min(1, 2*error_rate)
     round_randomize_rate = 1 - (1 - randomize_rate)**(1 / rounds)
     round_error_rate = round_randomize_rate / 2
-
-
     return round_error_rate
 
 
@@ -454,7 +469,7 @@ def plot_data(path: str, title: str, rounds_per_shot: int):
         for physical_error_rate in sorted(group.keys()):
             data = group[physical_error_rate]
             xs.append(physical_error_rate)
-            ys.append(round_adjustment(data.logical_error_rate, rounds=rounds_per_shot))
+            ys.append(round_adjustment(data.logical_error_rate, rounds=rounds_per_shot)) # round_adjustment(data.logical_error_rate, rounds=rounds_per_shot)
         plt.plot(xs, ys, label=f"diameter_scale_factor={distance}", marker=markers[distance])
 
     plt.legend()
@@ -506,8 +521,9 @@ def sample_single_depolarizing_layer_circuit():
             0.001,
             0.0025,
             0.005,
-            0.01,
-            0.02,
+            0.007,
+            # 0.01,
+            # 0.02,
             # 0.03,
             # 0.04,
             # 0.05,
@@ -528,9 +544,9 @@ def sample_single_depolarizing_layer_circuit():
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=1,
         before_round_1q_depolarization_factor=0,
-        noisy_cycles=500,
+        noisy_cycles=20,
         start_of_all_noisy_cycles_1q_depolarization_factor=0,#originally 1
-        diameter_factor=[1,10],
+        diameter_factor=[20,10],
         append=False,
         path="data.csv",
     )
@@ -542,6 +558,7 @@ def sample_parity_error_circuit():
     sample_error_rates(
         shots=10000,
         probabilities=[
+            0.00001,
             0.0001,
             0.0005,
             0.001,
@@ -554,26 +571,26 @@ def sample_parity_error_circuit():
             0.015,
             0.02,
             0.025,
-            0.03,
-            0.035,
-            0.04,
-            0.045,
-            0.05,
+            # 0.03,
+            # 0.035,
+            # 0.04,
+            # 0.045,
+            # 0.05,
         ],
         before_cycle_1q_depolarization_factor=0,
         before_parity_measure_2q_depolarization_factor=0,
         before_round_1q_depolarization_factor=1,
         noisy_cycles=50,
         start_of_all_noisy_cycles_1q_depolarization_factor=0,
-        diameter_factor=[1,2,3],
+        diameter_factor=[1,2],
         append=False,
         path="data_from_parity_errors.csv",
     )
 
 def main():
-    d = 1
-    noisy_cycles = 0
-    p = 0.
+    d = 2
+    noisy_cycles = 15
+    p = 0.01
     circuit = generate_circuit(
                     distance=d,
                     cycles=noisy_cycles,
@@ -582,21 +599,26 @@ def main():
                     before_parity_measure_2q_depolarization=p,
                     start_of_all_noisy_cycles_1q_depolarization=0,
     )
+    print("\n")
     print(circuit)
     error_model =circuit.detector_error_model(allow_gauge_detectors=True)
     print("\n")
     print(error_model)
-    samples = circuit.compile_detector_sampler().sample(10)
+    samples = circuit.compile_detector_sampler().sample(10) #detector sample
+    #samples = circuit.compile_sampler().sample(10)    #measurement sample
     for sample in samples:  
-       print("".join("_1"[e] for e in sample))
+       print("".join("_1"[int(e)] for e in sample))
+    error_model =circuit.detector_error_model()
+    
     #sample_single_depolarizing_layer_circuit()
+    #
     #sample_parity_error_circuit()
     #plot_data("data.csv",
-    #      title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
-    #          rounds_per_shot=18)
+    #      title="LogLog error rates per round for 6 cycle (24 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
+    #          rounds_per_shot=81)
     #plot_data("data_from_parity_errors.csv",
-    #          title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
-    #          rounds_per_shot=18)
+     #          title="LogLog error rates per round for 6 cycle (18 round) toric no-ancilla circuit with 2q depolarization before parity measurements",
+     #          rounds_per_shot=18)
 
 
 
