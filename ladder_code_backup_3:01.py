@@ -59,146 +59,6 @@ def condition_round(r)->string:
         condition ="Y"
     return condition
 
-'''TEST'''
-
-def generate_circuit_cycle_final(*,
-                           q2i: dict[complex,int],
-                           lad_centers: dict[complex,int],
-                           distance: int,
-                           detectors: bool) -> stim.Circuit:
-
-    #initializing the stable circuit
-    round_circuit=[]
-    edge_groups = {"X": [], "Y": [], "Z": []} 
-    edge_type_condition =[0,1,0,2]
-
-    #Detector variables 
-    measurement_time: dict[frozenset[int], int] ={} 
-    current_time = 0
-    measurement_per_round: int 
-    r_value =  ['Z1','X','Z2','Y'] #have a different time between the two Z checks measurement
-    for r in range(4):
-        if r==3:
-            relevant_lads =[h for h, category in lad_centers.items() if category == 1 ]
-        else:
-            relevant_lads =[h for h, category in lad_centers.items() if category == 0 ]
-        for h in relevant_lads:
-            for sign in [+1,-1]:
-                    q1 = loop(h + edge_types[edge_type_condition[r]].lad_to_qubit_delta*sign, distance=distance)
-                    q2 = loop(h + (edge_types[edge_type_condition[r]].lad_to_qubit_delta + edge_types[edge_type_condition[r]].size_check)*sign, distance = distance)
-                    if r!=2:
-                        edge_groups[condition_round(r)].append(frozenset([q1,q2]))
-        x_qubits = [q2i[q] for pair in edge_groups["X"] for q in sorted_complex(pair)]
-        y_qubits = [q2i[q] for pair in edge_groups["Y"] for q in sorted_complex(pair)]
-
-        circuit = stim.Circuit()
-         #Turn parity observables into single qubit observable
-        pair_target =[q2i[q] for pair in edge_groups[condition_round(r)] for q in sorted_complex(pair)]
-        
-        #Make all the parity operation Z basis parities
-        if r==1:
-            circuit.append_operation("H", pair_target)
-        if r ==3:
-            circuit.append_operation("H_YZ", pair_target)
-
-        if r==3:
-            circuit.append_operation("CNOT", pair_target[::-1])
-        else:
-            circuit.append_operation("CNOT", pair_target)
-
-        #detector search measurement time 
-        for k in range(0,len(pair_target),2):
-            edge_key = frozenset([pair_target[k],pair_target[k+1],r_value[r]]) 
-            measurement_time[edge_key] = current_time 
-            current_time+=1
-
-        #Measure
-        if r==3:
-            circuit.append_operation("M", pair_target[::2])
-        else:
-            circuit.append_operation("M", pair_target[1::2])
-    
-        #restore qubit bases
-        if r==3:
-            circuit.append_operation("CNOT", pair_target[::-1])
-        else:
-            circuit.append_operation("CNOT", pair_target)
-
-
-        if r ==3:
-            circuit.append_operation("H_YZ", pair_target)
-        if r==1:
-            circuit.append_operation("H", pair_target)
-
-
-
-
-        #multiply relevant measurement into the observable
-        included_measurement =[]
-        condition_observable = "NONE"
-        for pair in edge_groups["Z"]:
-            a,b =pair
-            if r<2:
-                condition_observable = "Z1"
-            else:
-                condition_observable = "Z2"
-            edge_key = frozenset([q2i[a],q2i[b],condition_observable])
-            included_measurement.append(stim.target_rec(measurement_time[edge_key]-current_time))
-        circuit.append_operation("OBSERVABLE_INCLUDE", included_measurement,0)
-       
-        round_circuit.append(circuit)
-    measurement_per_cycle = current_time
-    measurement_per_round = measurement_per_cycle//4
-
-    # Generate the detector circuit we will create  4 different detector circuit 
-    if detectors:
-        key_condition = [[1,0,0,1],
-                        ['Z1','Z1','Z2','Z2'],
-                        ['Z1','Z1','Z2','Z2'],
-                        ['Y','X','X','Y'],
-                        ['Y','X','X','Y']
-                        ]
-        for r in range(4):
-            circuit = stim.Circuit()
-            end_time= (r+1)*measurement_per_round
-            relevant_lads =[h for h, category in lad_centers.items() if category == key_condition[0][r] ]
-            for h in relevant_lads:   
-                record_targets =[]
-                count_edge =0
-      
-                for a,b in edges_around_lad:
-                    q1 = loop(h+a,distance =distance)
-                    q2 = loop(h+b,distance =distance)
-                    key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r]])
-                    relative_index = (measurement_time[key]-end_time)%measurement_per_cycle - measurement_per_cycle
-                    if count_edge<2:
-                        old_key = frozenset([q2i[q1],q2i[q2],key_condition[count_edge+1][r-2]])
-                        
-                        old_relative_index = (measurement_time[old_key]-end_time)%measurement_per_cycle - measurement_per_cycle
-                        if r%2==0:
-                            old_relative_index-=2*measurement_per_round
-                    else:   
-                        old_relative_index = relative_index - measurement_per_cycle          
-                    record_targets.append(stim.target_rec(relative_index))  
-                    record_targets.append(stim.target_rec(old_relative_index))
-                    count_edge+=1                                          
-                circuit.append_operation("DETECTOR", record_targets, [h.real, h.imag, 0])
-            circuit.append_operation("SHIFT_COORDS", [], [0, 0, 1])
-            
-            round_circuit[r] += circuit
-
-    full_circuit = stim.Circuit()
-    full_circuit += round_circuit[0] + round_circuit[1] + round_circuit[2] + round_circuit[3]
-
-    return full_circuit
-
-
-
-
-'''TEST'''
-
-
-
 def generate_circuit_cycle(*,
                            q2i: dict[complex,int],
                            before_parity_measure_2q_depolarization: float,
@@ -380,14 +240,8 @@ def generate_circuit(distance: int, cycles: int,
         distance=distance,
         detectors=True,
     )
-
-    final_detectors = generate_circuit_cycle_final(
-                            q2i=q2i,
-                            lad_centers=lad_centers,
-                            distance=distance,
-                            detectors=True,
-    )
     
+
     full_circuit = stim.Circuit()
     for q,i in q2i.items():
         full_circuit.append_operation("QUBIT_COORDS", [i], [q.real,q.imag])
@@ -398,7 +252,7 @@ def generate_circuit(distance: int, cycles: int,
 
     full_circuit += (
              round_circuit_no_noise_no_detectors * 2
-             + round_circuit_no_noise_yes_detectors * 1
+             + round_circuit_no_noise_yes_detectors * 0
     )
     if start_of_all_noisy_cycles_1q_depolarization>0:
         full_circuit.append_operation("DEPOLARIZE1",
@@ -407,10 +261,8 @@ def generate_circuit(distance: int, cycles: int,
 
     full_circuit += (
             round_circuit_yes_noise_yes_detectors * cycles
-            + round_circuit_no_noise_yes_detectors * 1
+
     )
-
-
 
     #finish circuit with data measurement
     qubits_coords_to_measure = [q for q in qubits_top_leg]
@@ -431,10 +283,10 @@ def generate_circuit(distance: int, cycles: int,
 
 # Generates ladder code task using sinter
 def generate_example_tasks():
-    for p in [0.0001,0.0005,0.001,0.005,0.01,0.05]:
+    for p in [0.0001,0.0005,0.001,0.005,0.01,0.05, 0.08, 0.1,0.5]:
         for d in [1,2,3,4,5]:
             yield sinter.Task(
-                circuit = generate_circuit(distance=d, cycles=50,
+                circuit = generate_circuit(distance=d, cycles=2,
                      before_parity_measure_2q_depolarization=p,
                      before_round_1q_depolarization=0,
                      before_cycle_1q_depolarization=0,
@@ -484,7 +336,7 @@ def main():
     ax.set_ylim(1e-2, 1e-0)
     ax.set_xlim(5e-4, 5e-1)
     ax.loglog()
-    ax.set_title("Ladder Code Error Rates (Phenomenological Noise)")
+    ax.set_title("Repetition Code Error Rates (Phenomenological Noise)")
     ax.set_xlabel("Phyical Error Rate")
     ax.set_ylabel("Logical Error Rate per Shot")
     ax.grid(which='major')
